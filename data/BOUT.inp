@@ -1,0 +1,54 @@
+nout = 400
+timestep = 0.2
+
+myg = 0
+
+ZMAX = mesh:Lz/(2*pi) # Sets dz
+
+[mesh]
+
+Lx = 2  # X size
+Lz = 1  # Z size
+
+nx = 164    # number of points in X, including 4 guard cells
+ny = 1      # Axisymmetric
+nz = 160    # Number of points in Z
+
+xpos = x * Lx          # X position
+zpos = z * Lz / (2*pi) # Z position
+
+dx = Lx/nx
+
+[mesh:ddx]
+upwind = W3
+
+[mesh:ddz]
+upwind = W3
+
+[laplace]
+type=cyclic
+
+[model]
+
+density0 = 1.0
+density1 = 0.1
+
+viscosity0 = 1e-3
+viscosity1 = 1e-5
+
+gravity = 0.01
+
+[vorticity]
+
+# Boundary conditions
+bndry_all = neumann
+
+# Initial condition
+function = 0.1*cos(2*pi*x)
+
+[vof]
+
+bndry_all=neumann
+
+function = H( mixmode(z)*mixmode(2*pi*x) - 0.5 )
+
