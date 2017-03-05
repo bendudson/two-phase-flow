@@ -8,7 +8,7 @@
 /// 
 class TwoPhase : public PhysicsModel {
 private:
-  Field3D vorticity;
+  Field3D vorticity; ///< Curl(momentum) with v = Curl(psi)
   Field3D vof;   ///< Volume of Fluid
 
   Field3D psi; ///< Stream function, calculated from vorticity
@@ -91,7 +91,7 @@ protected:
     
     // Calculate stream function
     psi = laplace->solve(vorticity / density);
-    mesh->communicate(psi);
+    mesh->communicate(psi); // Communicates guard cells
     
     // Vof, advected by flow
     ddt(vof) = -bracket(psi, vof, BRACKET_SIMPLE);
