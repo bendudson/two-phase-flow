@@ -4,6 +4,8 @@
 #include <derivs.hxx>
 #include <invert_laplace.hxx>
 
+const Field3D Div_VOF(const Field3D &n, const Field3D &f, BoutReal D=1.0);
+
 /// Simulates incompressible flow of two fluids
 /// 
 class TwoPhase : public PhysicsModel {
@@ -23,6 +25,7 @@ private:
   
   Laplacian *laplace; // Laplacian inversion to get stream function
   
+  BoutReal vof_D; // Anti-diffusion for VOF advection
 protected:
   /// Initialise simulation
   ///
@@ -38,6 +41,8 @@ protected:
     OPTION(opt, viscosity1, 0.1);
 
     OPTION(opt, gravity, 0.1);
+    
+    OPTION(opt, vof_D, 0.1);
     
     // Specity evolving variables
     SOLVE_FOR2(vorticity, vof);
@@ -94,7 +99,7 @@ protected:
     mesh->communicate(psi); // Communicates guard cells
     
     // Vof, advected by flow
-    ddt(vof) = -bracket(psi, vof, BRACKET_SIMPLE);
+    ddt(vof) = -Div_VOF(vof, psi, vof_D);
 
     // vorticity equation
     ddt(vorticity) =
@@ -105,5 +110,117 @@ protected:
     return 0;
   }
 };
+
+
+BoutReal minmod_vof(BoutReal a, BoutReal b, BoutReal c) {
+  BoutReal sb = SIGN(b);
+  return sb * BOUTMAX(0.0, BOUTMIN(sb*a, fabs(b), sb*c));
+}
+
+/*
+ * Divergence of a Volume Of Fluid (VOF) marker
+ *  Div (n * b x Grad(f)/B)
+ *
+ * 
+ * 
+ */
+const Field3D Div_VOF(const Field3D &n, const Field3D &f, BoutReal D) {
+  Field3D result(0.0);
+  
+  //////////////////////////////////////////
+  // X-Z advection.
+  // 
+  //             Z
+  //             |
+  // 
+  //    fmp --- vU --- fpp
+  //     |      nU      |
+  //     |               |
+  //    vL nL        nR vR    -> X
+  //     |               |
+  //     |      nD       |
+  //    fmm --- vD --- fpm
+  //
+
+  Coordinates *coord = mesh->coordinates();
+  Field2D J = coord->J;
+  Field2D dx = coord->dx;
+  BoutReal dz = coord->dz;
+  
+  for(int i=mesh->xstart;i<=mesh->xend+1;i++)
+    for(int j=mesh->ystart;j<=mesh->yend;j++)
+      for(int k=0;k<mesh->LocalNz;k++) {
+	int kp = (k+1) % (mesh->LocalNz);
+	int km = (k-1+mesh->LocalNz) % (mesh->LocalNz);
+	int kmm = (km-1+mesh->LocalNz) % (mesh->LocalNz);
+	
+	// 1) Interpolate stream function f onto corners fmp, fpp, fpm
+	
+	BoutReal fmm = 0.25*(f(i,j,k) + f(i-1,j,k) + f(i,j,km) + f(i-1,j,km));
+	BoutReal fmp = 0.25*(f(i,j,k) + f(i,j,kp) + f(i-1,j,k) + f(i-1,j,kp)); // 2nd order accurate
+	BoutReal fpm = 0.25*(f(i,j,k) + f(i+1,j,k) + f(i,j,km) + f(i+1,j,km));
+	
+	// 2) Calculate velocities on cell faces vD and vL
+	
+	BoutReal vD = J(i,j)*(fmm - fpm)/dx(i,j); // -J*df/dx
+	BoutReal vL = 0.5*(J(i,j)+J(i-1,j))*(fmp - fmm)/dz; // J*df/dz 
+
+	// 3) Calculate n on the cell faces. The sign of the
+	//    velocity determines which side is used.
+	
+	// X direction
+	
+        BoutReal c = n(i,j,k);
+        BoutReal m = n(i-1,j,k);
+        BoutReal mm = n(i-2,j,k);
+        BoutReal p = n(i+1,j,k);
+        
+        // Left side
+          
+	if ((i==mesh->xstart) && (mesh->firstX())) {
+          // At left boundary in X
+          
+        } else {
+          // Not at a boundary
+          
+          // This implements 1st-order upwinding
+          BoutReal flux;
+          if (vL < 0.0) {
+            // Flux from cell i into i-1
+            flux = vL * c;
+          } else {
+            // Flux from cell i-1 into i
+            flux = vL * m;
+          }
+
+          // Anti-diffusion. This algorithm from
+          // "Anti-diffusion method for interface steepening in two-phase incompressible flow"
+          // by K. K. So, X. Y. Hu and N. A. Adams
+          
+          flux += D*minmod_vof(p - c, c - m, m - mm);
+
+          result(i,j,k)   -= flux / (dx(i,j) * J(i,j));
+          result(i-1,j,k) += flux / (dx(i-1,j) * J(i-1,j));
+        }
+        
+        m = n(i,j,km);
+        mm = n(i,j,kmm);
+        p = n(i,j,kp);
+        
+        BoutReal flux;
+	if (vD < 0.0) {
+	  flux = vD * c;
+        }else {
+          flux = vD * m;
+        }
+        flux += D*minmod_vof(p - c, c - m, m - mm);
+        
+        flux /= J(i,j)*dz;
+        
+        result(i,j,k)   -= flux;
+        result(i,j,km)  += flux;
+      }
+  return result;
+}
 
 BOUTMAIN(TwoPhase);

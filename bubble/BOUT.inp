@@ -1,0 +1,62 @@
+nout = 20   # Number of output steps
+timestep = 1 # Time between outputs
+
+myg = 0  # No guard cells in Y since a 2D simulation
+
+ZMAX = mesh:Lz/(2*pi) # Sets dz
+
+[mesh]
+
+Lx = 1  # X size
+Lz = 1  # Z size
+
+nx = 68    # number of points in X, including 4 guard cells
+ny = 1      # Axisymmetric
+nz = 64    # Number of points in Z
+
+xpos = x * Lx          # X position
+zpos = z * Lz / (2*pi) # Z position
+
+dx = Lx/nx
+
+[mesh:ddx]
+upwind = W3  # Upwinding scheme in X (W3 = WENO3)
+
+[mesh:ddz]
+upwind = W3  # Upwinding scheme in Z
+
+[laplace]    # Laplacian inversion for vorticity -> stream function (psi)
+type=cyclic
+
+[solver]     # Time integration solver
+maxl=10      # Maximum number of linear iterations per nonlinear step
+mxstep=100000
+
+[model]
+
+# density of each fluid
+density0 = 1.0
+density1 = 0.1
+
+# Viscosity of each fluid
+viscosity0 = 1e-3
+viscosity1 = 1e-5
+
+gravity = 0.01
+
+[vorticity]
+
+# Boundary conditions
+bndry_all = neumann
+
+# Initial condition. This produces streams with zero net vorticity
+function = 0.0
+
+[vof]
+
+bndry_all=neumann
+
+# Initial condition is 1 where there are bubbles, 0 otherwise
+function = H( exp(-((x-0.5)/0.2)^2 - ((z/(2*pi) - 0.5)/0.2)^2 ) - 0.5 )
+
+#function = H( exp(-((x-0.5)/0.2)^2 ) + 0.01*mixmode(2.*z)- 0.5 )
