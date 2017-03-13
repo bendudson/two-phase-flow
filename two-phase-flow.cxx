@@ -6,6 +6,7 @@
 
 const Field3D Div_VOF(const Field3D &n, const Field3D &f, BoutReal D=1.0);
 const Field3D Curvature(const Field3D &c, BoutReal eps=1e-5);
+const Field3D Curvature_HF(const Field3D &c, BoutReal eps=1e-5);
 const Field3D smoothXZ(const Field3D &f);
 
 /// Simulates incompressible flow of two fluids
@@ -22,8 +23,8 @@ private:
   
   Field3D kappa; ///< Surface curvature
   Field3D surf_force; ///< Surface forcing term in vorticity
-  Field3D vof_smooth; ///< Smoothed VOF used for curvature calculation
-
+  int curv_method; ///< Curvature calculation method
+  
   BoutReal density0, density1; // Density of each fluid
   BoutReal viscosity0, viscosity1; // Kinematic viscosity of each fluid
   BoutReal surface_tension; // sigma
@@ -47,7 +48,8 @@ protected:
     OPTION(opt, viscosity0, 1.0);
     OPTION(opt, viscosity1, 0.1);
     OPTION(opt, surface_tension, 0.0);
-
+    OPTION(opt, curv_method, 0);
+    
     OPTION(opt, gravity, 0.1);
     
     OPTION(opt, vof_D, 0.1);
@@ -59,7 +61,7 @@ protected:
     SAVE_REPEAT(psi);
     
     // Save the curvature
-    SAVE_REPEAT3(kappa, surf_force, vof_smooth);
+    SAVE_REPEAT2(kappa, surf_force);
 
     // Create Laplacian inversion solver
     laplace = Laplacian::create(Options::getRoot()->getSection("laplace"));
@@ -105,18 +107,27 @@ protected:
       viscosity[i] = c*viscosity1 + (1.-c)*viscosity0;
     }
     
-    // Calculate curvature. Note we have to smooth the VOF function
-    // to reduce spurious curvatures
-
-    vof_smooth = vof;
-    for(int i=0;i<6;i++) {
-      vof_smooth = smoothXZ(vof_smooth);
+    // Calculate curvature
+    if (curv_method == 0) {
+      // Finite Differences, using VOF function
+      // Note we have to smooth the VOF function
+      // to reduce spurious curvatures
+    
+      Field3D vof_smooth = vof;
+      for(int i=0;i<6;i++) {
+        vof_smooth = smoothXZ(vof_smooth);
+      }
+      kappa = Curvature(vof_smooth);
+    }else if (curv_method == 1) {
+      // Use Height Function method
+      kappa = Curvature_HF(vof);
+    }else {
+      throw BoutException("Unrecognised curvature calculation method");
     }
-    kappa = Curvature(vof_smooth, 1e-9);
     mesh->communicate(kappa);
 
     // Calculate stream function
-    psi = laplace->solve(vorticity / density);
+    psi = laplace->solve(vorticity / density0);
     mesh->communicate(psi); // Communicates guard cells
     
     // Vof, advected by flow
@@ -330,6 +341,131 @@ const Field3D Curvature(const Field3D &c, BoutReal eps) {
         result(i,j,k) = 0.5*(nx_pp + nx_pm - nx_mp - nx_mm)/dx(i,j)
           + 0.5*(nz_mp + nz_pp - nz_mm - nz_pm)/dz;
 
+        // Can't resolve radius of curvature smaller than
+        // the grid size, so limit the magnitude of the
+        // curvature
+        BoutReal kmax = 0.5*(1./dz + 1./dx(i,j));
+        if (result(i,j,k) < -kmax) {
+          result(i,j,k) = -kmax;
+        }
+        if(result(i,j,k) > kmax) {
+          result(i,j,k) = kmax;
+        }
+
+      }
+  return result;
+}
+
+// Height Function estimation of the curvature
+// From M.Sussman JCP 187 (2003) 110-136
+// "A second order coupled level set and volume-of-fluid
+// method for computing growth and collapse of vapor bubbles"
+//
+const Field3D Curvature_HF(const Field3D &c, BoutReal eps) {
+
+  Field3D result(0.0);
+
+  Coordinates *coord = mesh->coordinates();
+  Field2D J = coord->J;
+  Field2D dx = coord->dx;
+  BoutReal dz = coord->dz;
+  
+  for(int i=mesh->xstart;i<=mesh->xend+1;i++)
+    for(int j=mesh->ystart;j<=mesh->yend;j++)
+      for(int k=0;k<mesh->LocalNz;k++) {
+        
+        int kp = (k+1) % (mesh->LocalNz);
+        int km = (k-1+mesh->LocalNz) % (mesh->LocalNz);
+        
+        // Determine orientation of boundary
+        
+        /*
+        BoutReal nx = (c(i+1,j,km) + c(i+1,j,k) + c(i+1,j,kp) 
+                       - c(i-1,j,km) - c(i-1,j,k) - c(i-1,j,kp));
+        BoutReal nz = ( c(i-1,j,kp) + c(i,j,kp) + c(i+1,j,kp)
+                        - c(i-1,j,km) - c(i,j,km) - c(i+1,j,km) );
+        */
+        
+        BoutReal nx = (c(i+1,j,k) - c(i-1,j,k))/(2.*dx(i,j,k));
+        BoutReal nz = (c(i,j,kp) - c(i,j,km)) / (2.*dz);
+        
+        if (sqrt(SQ(nx) + SQ(nz)) < eps) {
+          // No normal, so no curvature
+          //continue;
+        }
+        
+        BoutReal hm, hc, hp;
+        BoutReal sign=1.0;
+        BoutReal d;
+        if(abs(nx) > abs(nz)) {
+          // Difference in X bigger than difference in Z
+          // so normal is mainly in X direction
+          
+          // Sum the height function
+          hm = c(i,j,km);
+          hc = c(i,j,k);
+          hp = c(i,j,kp);
+          for(int m=1;m<=3;m++) {
+            if(i-m >= 0) {
+              hm += c(i-m,j,km);
+              hc += c(i-m,j,k);
+              hp += c(i-m,j,kp);
+            }
+            if(i+m < mesh->LocalNz) {
+              hm += c(i+m,j,km);
+              hc += c(i+m,j,k);
+              hp += c(i+m,j,kp);
+            }
+          }
+          
+          d = dz;
+          
+          hm *= dx(i,j);
+          hc *= dx(i,j);
+          hp *= dx(i,j);
+          
+        }else {
+          // Normal mainly in Z direction
+          
+          hm = c(i-1,j,km) + c(i-1,j,k) + c(i-1,j,kp);
+          hc = c(i,j,km) + c(i,j,k) + c(i,j,kp);
+          hp = c(i+1,j,km) + c(i+1,j,k) + c(i+1,j,kp);
+          
+          for(int m=2;m<=3;m++) {
+            kp = (kp+1) % mesh->LocalNz;
+            km = (km-1+mesh->LocalNz) % mesh->LocalNz;
+            
+            hm += c(i-1,j,km) + c(i-1,j,kp);
+            hc += c(i,j,km) + c(i,j,kp);
+            hp += c(i+1,j,km) + c(i+1,j,kp);
+          }
+          
+          hm *= dz;
+          hc *= dz;
+          hp *= dz;
+          
+          d = dx(i,j);
+        }
+        
+        // First derivative of height
+        BoutReal dh = (hp - hm) / (2.*d);
+        
+        // Second derivative of height
+        BoutReal d2h = (hp - 2.*hc + hm)/SQ(d); 
+        
+        // Curvature of line in 2D
+        result(i,j,k) = d2h / pow(1.0 + SQ(dh), 3./2);
+
+        // Can't resolve radius of curvature smaller than
+        // the grid size, so limit the magnitude of the
+        // curvature
+        BoutReal kmax = 1./d;
+        if (result(i,j,k) < -kmax) {
+          result(i,j,k) = -kmax;
+        }
+        if(result(i,j,k) > kmax) {
+          result(i,j,k) = kmax;
+        }
       }
   return result;
 }
