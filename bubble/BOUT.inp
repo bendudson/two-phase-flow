@@ -1,5 +1,5 @@
-nout = 20   # Number of output steps
-timestep = 1 # Time between outputs
+nout = 100   # Number of output steps
+timestep = 1e-4 # Time between outputs
 
 myg = 0  # No guard cells in Y since a 2D simulation
 
@@ -7,12 +7,12 @@ ZMAX = mesh:Lz/(2*pi) # Sets dz
 
 [mesh]
 
-Lx = 1  # X size
-Lz = 1  # Z size
+Lx = 5e-3  # X size [m]
+Lz = 5e-3  # Z size [m]
 
-nx = 68    # number of points in X, including 4 guard cells
+nx = 132    # number of points in X, including 4 guard cells
 ny = 1      # Axisymmetric
-nz = 64    # Number of points in Z
+nz = 128    # Number of points in Z
 
 xpos = x * Lx          # X position
 zpos = z * Lz / (2*pi) # Z position
@@ -34,15 +34,20 @@ mxstep=100000
 
 [model]
 
-# density of each fluid
-density0 = 1.0
-density1 = 0.1
+# density of each fluid [kg/m^3]
+density0 = 1000  # water = 1e3
+#density1 = 1.225 # air = 1.225
+density1 = 1000
 
-# Viscosity of each fluid
-viscosity0 = 1e-3
-viscosity1 = 1e-5
+# Kinematic viscosity of each fluid [m^2/s]
+viscosity0 = 1e-6     # water ~ 1mm^2/s
+viscosity1 = 1.48e-5  # air ~ 1.48e-5
 
-gravity = 0.01
+surface_tension = 7.2e-2 # 72 mN / m for water-air
+
+gravity = 0.0
+
+vof_D = 0.001
 
 [vorticity]
 
@@ -57,6 +62,20 @@ function = 0.0
 bndry_all=neumann
 
 # Initial condition is 1 where there are bubbles, 0 otherwise
+
+#function = exp(-((x-0.5)/0.2)^2 - ((z/(2*pi) - 0.5)/0.2)^2)
+
+# Single bubble
 function = H( exp(-((x-0.5)/0.2)^2 - ((z/(2*pi) - 0.5)/0.2)^2 ) - 0.5 )
 
+# Square bubble
+#function = H(exp(-((x-0.5)/0.2)^2) - 0.5) * H(exp(-((z/(2*pi) - 0.5)/0.2)^2 ) - 0.5)
+
+# Alternating layers of fluid with some noise in the boundary
 #function = H( exp(-((x-0.5)/0.2)^2 ) + 0.01*mixmode(2.*z)- 0.5 )
+
+# A drop above a flat surface
+#function = H( 0.5 - exp(-((x-0.5)/0.1)^2 - ((z/(2*pi) - 0.5)/0.1)^2 ) - H(0.2 - x))
+
+# A flat surface
+#function = H(x - 0.5)
