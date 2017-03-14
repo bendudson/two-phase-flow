@@ -458,9 +458,13 @@ const Field3D Curvature_HF(const Field3D &c, BoutReal eps) {
               hp += c(i+m,j,kp);
             }
           }
+          /*
+          // This seemed like a good idea, but gives wrong result
+          // for capillary wave test
           if (hc < 1.0) {
             continue;
           }
+          */
           
           d = dz;
           
@@ -484,9 +488,11 @@ const Field3D Curvature_HF(const Field3D &c, BoutReal eps) {
             hp += c(i+1,j,km) + c(i+1,j,kp);
           }
           
+          /*
           if (hc < 1.0) {
             continue;
           }
+          */
 
           hm *= dz;
           hc *= dz;

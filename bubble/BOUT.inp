@@ -1,5 +1,5 @@
 nout = 100   # Number of output steps
-timestep = 1e-4 # Time between outputs
+timestep = 1e-3 # Time between outputs
 
 myg = 0  # No guard cells in Y since a 2D simulation
 
@@ -17,7 +17,7 @@ nz = 64    # Number of points in Z
 xpos = x * Lx          # X position
 zpos = z * Lz / (2*pi) # Z position
 
-dx = Lx/nx
+dx = Lx/(nx-4)
 
 [mesh:ddx]
 upwind = W3  # Upwinding scheme in X (W3 = WENO3)

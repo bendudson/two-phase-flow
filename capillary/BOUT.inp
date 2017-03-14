@@ -17,7 +17,7 @@ nz = 64    # Number of points in Z
 xpos = x * Lx          # X position
 zpos = z * Lz / (2*pi) # Z position
 
-dx = Lx/nx
+dx = Lx/(nx-4)
 
 [mesh:ddx]
 upwind = W3  # Upwinding scheme in X (W3 = WENO3)
@@ -43,7 +43,7 @@ viscosity0 = 1.6394e-3     # water ~ 1mm^2/s (1e-6)
 viscosity1 = 1.6394e-3     # air ~ 1.48e-5
 
 surface_tension = 0.25/(pi^3) # 72 mN / m for water-air
-curv_method = 0   # 0 = Finite Differences on smoothed VOF; 1 = Height Function method
+curv_method = 1   # 0 = Finite Differences on smoothed VOF; 1 = Height Function method
 
 gravity = 0.0   # Acceleration due to gravity
 
