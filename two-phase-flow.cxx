@@ -25,15 +25,16 @@ private:
   Field3D surf_force; ///< Surface forcing term in vorticity
   int curv_method; ///< Curvature calculation method
   
-  BoutReal density0, density1; // Density of each fluid
-  BoutReal viscosity0, viscosity1; // Kinematic viscosity of each fluid
-  BoutReal surface_tension; // sigma
+  BoutReal density0, density1; ///< Density of each fluid
+  BoutReal viscosity0, viscosity1; ///< Kinematic viscosity of each fluid
+  BoutReal surface_tension; ///< N/m
 
-  BoutReal gravity;
+  BoutReal gravity; ///< Acceleration due to gravity
   
   Laplacian *laplace; // Laplacian inversion to get stream function
   
-  BoutReal vof_D; // Anti-diffusion for VOF advection
+  bool boussinesq; ///< Assume constant density in inertia?
+  BoutReal vof_D; ///< Anti-diffusion for VOF advection
 protected:
   /// Initialise simulation
   ///
@@ -51,7 +52,8 @@ protected:
     OPTION(opt, curv_method, 0);
     
     OPTION(opt, gravity, 0.1);
-    
+   
+    OPTION(opt, boussinesq, true);
     OPTION(opt, vof_D, 0.1);
     
     // Specity evolving variables
@@ -60,7 +62,7 @@ protected:
     // Save the stream function at each output
     SAVE_REPEAT(psi);
     
-    // Save the curvature
+    // Save the curvature and surface forcing term
     SAVE_REPEAT2(kappa, surf_force);
 
     // Create Laplacian inversion solver
@@ -127,7 +129,12 @@ protected:
     mesh->communicate(kappa);
 
     // Calculate stream function
-    psi = laplace->solve(vorticity / density0);
+    if (boussinesq) {
+      // Ignore density variations in inertia
+      psi = laplace->solve(vorticity / density0);
+    } else {
+      throw BoutException("Non-Boussinesq not implemented yet");
+    }
     mesh->communicate(psi); // Communicates guard cells
     
     // Vof, advected by flow
@@ -152,6 +159,7 @@ BoutReal minmod_vof(BoutReal a, BoutReal b, BoutReal c) {
   return sb * BOUTMAX(0.0, BOUTMIN(sb*a, fabs(b), sb*c));
 }
 
+/// Smoothing in X-Z plane, using 9 point stencil
 const Field3D smoothXZ(const Field3D &f) {
   Field3D result;
   
@@ -249,7 +257,31 @@ const Field3D Div_VOF(const Field3D &n, const Field3D &f, BoutReal D) {
           // "Anti-diffusion method for interface steepening in two-phase incompressible flow"
           // by K. K. So, X. Y. Hu and N. A. Adams
           
-          flux += D*minmod_vof(p - c, c - m, m - mm);
+          // Need to account for:
+          // 1) The velocity, since this flux is counteracting
+          //    the diffusion caused by the advection
+          // 2) The surface normal direction. The flux should
+          //    be in the direction normal to the surface, and
+          //    minimise distortion of the curvature of the surface
+          //    since this will lead to parasitic flows
+
+#if 1
+          BoutReal coef = D*fabs(vL);
+
+          // Calculate normal vector at this face
+          BoutReal nx = (c - m)/dx(i,j);
+          BoutReal nz = 0.25*(n(i,j,kp) + n(i-1,j,kp) - n(i,j,km) - n(i-1,j,km)) / dz;
+
+          BoutReal nmag = sqrt(SQ(nx) + SQ(nz));
+          if (nmag > 1e-6) {
+            // Project flux onto normal vector
+            coef *= fabs(nx)/nmag;
+          }
+#else
+          BoutReal coef = D;
+#endif
+
+          flux += coef*minmod_vof(p - c, c - m, m - mm);
 
           result(i,j,k)   -= flux / (dx(i,j) * J(i,j));
           result(i-1,j,k) += flux / (dx(i-1,j) * J(i-1,j));
@@ -265,7 +297,22 @@ const Field3D Div_VOF(const Field3D &n, const Field3D &f, BoutReal D) {
         }else {
           flux = vD * m;
         }
-        flux += D*minmod_vof(p - c, c - m, m - mm);
+
+#if 1
+        BoutReal coef = D*fabs(vD);
+
+        BoutReal nz = (c - m)/dz;
+        BoutReal nx = 0.25*(n(i+1,j,k) + n(i+1,j,km) - n(i-1,j,k) - n(i-1,j,km))/dx(i,j);
+        BoutReal nmag = sqrt(SQ(nx) + SQ(nz));
+        if (nmag > 1e-6) {
+          // Project flux onto normal vector
+          coef *= fabs(nz)/nmag;
+        }
+#else
+        BoutReal coef = D;
+#endif
+
+        flux += coef*minmod_vof(p - c, c - m, m - mm);
         
         flux /= J(i,j)*dz;
         
@@ -389,13 +436,7 @@ const Field3D Curvature_HF(const Field3D &c, BoutReal eps) {
         BoutReal nx = (c(i+1,j,k) - c(i-1,j,k))/(2.*dx(i,j,k));
         BoutReal nz = (c(i,j,kp) - c(i,j,km)) / (2.*dz);
         
-        if (sqrt(SQ(nx) + SQ(nz)) < eps) {
-          // No normal, so no curvature
-          //continue;
-        }
-        
-        BoutReal hm, hc, hp;
-        BoutReal sign=1.0;
+        BoutReal hm, hc, hp; // Heights at -(m), centre (c) and +(p)
         BoutReal d;
         if(abs(nx) > abs(nz)) {
           // Difference in X bigger than difference in Z
@@ -416,6 +457,9 @@ const Field3D Curvature_HF(const Field3D &c, BoutReal eps) {
               hc += c(i+m,j,k);
               hp += c(i+m,j,kp);
             }
+          }
+          if (hc < 1.0) {
+            continue;
           }
           
           d = dz;
@@ -440,13 +484,17 @@ const Field3D Curvature_HF(const Field3D &c, BoutReal eps) {
             hp += c(i+1,j,km) + c(i+1,j,kp);
           }
           
+          if (hc < 1.0) {
+            continue;
+          }
+
           hm *= dz;
           hc *= dz;
           hp *= dz;
           
           d = dx(i,j);
         }
-        
+
         // First derivative of height
         BoutReal dh = (hp - hm) / (2.*d);
         
