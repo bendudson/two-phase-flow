@@ -8,6 +8,7 @@ const Field3D Div_VOF(const Field3D &n, const Field3D &f, BoutReal D=1.0);
 const Field3D Curvature(const Field3D &c, BoutReal eps=1e-5);
 const Field3D Curvature_HF(const Field3D &c, BoutReal eps=1e-5);
 const Field3D smoothXZ(const Field3D &f);
+const Field3D Div_Perp_Lap_FV(const Field3D &a, const Field3D &f, bool xflux);
 
 /// Simulates incompressible flow of two fluids
 /// 
@@ -24,6 +25,7 @@ private:
   Field3D kappa; ///< Surface curvature
   Field3D surf_force; ///< Surface forcing term in vorticity
   int curv_method; ///< Curvature calculation method
+  int visc_method; ///< Viscosity method
   
   BoutReal density0, density1; ///< Density of each fluid
   BoutReal viscosity0, viscosity1; ///< Kinematic viscosity of each fluid
@@ -50,6 +52,7 @@ protected:
     OPTION(opt, viscosity1, 0.1);
     OPTION(opt, surface_tension, 0.0);
     OPTION(opt, curv_method, 0);
+    OPTION(opt, visc_method, 0);
     
     OPTION(opt, gravity, 0.1);
    
@@ -81,6 +84,9 @@ protected:
         vof[i] = 1.0;
       }
     }
+
+    psi = 0.0; // Starting value for Picard
+    
     return 0;
   }
 
@@ -133,7 +139,30 @@ protected:
       // Ignore density variations in inertia
       psi = laplace->solve(vorticity / density0);
     } else {
-      throw BoutException("Non-Boussinesq not implemented yet");
+      // Picard iteration
+      // Vort = Div( density * Grad(psi))
+      //      = Div(density0 * Grad(psi)) + Div( (density - density0) * Grad(psi))
+      // so
+      // Div(density0 * Grad(psi)) = Vort - Div( (density - density0) * Grad(psi))
+      // Since density0 is a constant, the LHS can be solved using the
+      // same solver as the Boussinesq approximation.
+      // The RHS is calculated using the last value of psi, and iterated
+      // to find a self-consistent solution
+      
+      // Record the maximum value of psi at this iteration
+      // and the last iteration
+      BoutReal psi_max_old, psi_max = max(psi, true);
+      
+      BoutReal absdiff; // The absolute difference between psi_max and psi_max_old
+      do {
+        mesh->communicate(psi);
+        Field3D rhs = vorticity - Div_Perp_Lap_FV((density - density0), psi, false);
+        psi = laplace->solve(rhs / density0);
+
+        psi_max_old = psi_max;
+        psi_max = max(psi, true);
+        absdiff = abs(psi_max_old - psi_max);
+      } while( (absdiff/psi_max > 1e-5) && (absdiff > 1e-9));
     }
     mesh->communicate(psi); // Communicates guard cells
     
@@ -146,9 +175,46 @@ protected:
     ddt(vorticity) =
       - bracket(psi, vorticity, BRACKET_ARAKAWA)
       - gravity * DDZ(density)
-      + viscosity*Delp2(vorticity)
       - surf_force
       ;
+
+    
+    if (visc_method == 0) {
+      // Simple viscosity term, assuming constant viscosity
+      ddt(vorticity) += viscosity*Delp2(vorticity);
+      
+    } else if (visc_method == 1) {
+      // Corrected form of viscosity. Adds a term which should cancel
+      // the energy-violation due to shearing boundaries
+      
+      ddt(vorticity) +=  Div_Perp_Lap_FV(viscosity, vorticity, false);
+      
+    } else {
+      // Full form of viscosity tensor, including variations in mu
+      // (density or viscosity).
+      // NOTE: Doesn't seem to be well behaved numerically.
+
+      Field3D mu = viscosity * density;
+      
+      Field3D delp2_psi = Delp2(psi);
+      Field3D ddz_psi = DDZ(psi);
+      Field3D ddx_psi = DDX(psi);
+      Field3D ddz_mu = DDZ(mu);
+      Field3D ddx_mu = DDX(mu);
+
+      mesh->communicate(delp2_psi, ddz_psi, ddx_psi, ddz_mu, ddx_mu);
+      delp2_psi.applyBoundary("neumann");
+      ddz_psi.applyBoundary("neumann");
+      ddx_psi.applyBoundary("neumann");
+      ddz_mu.applyBoundary("neumann");
+      ddx_mu.applyBoundary("neumann");
+
+      ddt(vorticity) += Delp2(mu * delp2_psi)
+        + bracket(ddx_mu, ddz_psi, BRACKET_ARAKAWA)
+        + bracket(ddx_psi, ddz_mu, BRACKET_ARAKAWA)
+        ;
+    }
+    
     return 0;
   }
 };
@@ -187,6 +253,7 @@ const Field3D smoothXZ(const Field3D &f) {
  */
 const Field3D Div_VOF(const Field3D &n, const Field3D &f, BoutReal D) {
   Field3D result(0.0);
+
   
   //////////////////////////////////////////
   // X-Z advection.
@@ -521,6 +588,92 @@ const Field3D Curvature_HF(const Field3D &c, BoutReal eps) {
           result(i,j,k) = kmax;
         }
       }
+  return result;
+}
+
+const Field3D Div_Perp_Lap_FV(const Field3D &a, const Field3D &f, bool xflux) {
+
+  Field3D result = 0.0;
+
+  Coordinates *coord = mesh->coordinates();
+  
+  //////////////////////////////////////////
+  // X-Z diffusion
+  //
+  //            Z
+  //            |
+  //
+  //     o --- gU --- o
+  //     |     nU     |
+  //     |            |
+  //    gL nL      nR gR    -> X
+  //     |            |
+  //     |     nD     |
+  //     o --- gD --- o
+  //
+
+  Field3D fs = f;
+  Field3D as = a;
+
+  for (int i = mesh->xstart; i <= mesh->xend; i++)
+    for (int j = mesh->ystart; j <= mesh->yend; j++)
+      for (int k = 0; k < mesh->LocalNz; k++) {
+        int kp = (k + 1) % mesh->LocalNz;
+        int km = (k - 1 + mesh->LocalNz) % mesh->LocalNz;
+
+        // Calculate gradients on cell faces
+
+        BoutReal gR = (coord->g11(i, j) + coord->g11(i + 1, j)) *
+                          (fs(i + 1, j, k) - fs(i, j, k)) /
+                          (coord->dx(i + 1, j) + coord->dx(i, j)) +
+                      0.5 * (coord->g13(i, j) + coord->g13(i + 1, j)) *
+                          (fs(i + 1, j, kp) - fs(i + 1, j, km) + fs(i, j, kp) -
+                           fs(i, j, km)) /
+                          (4. * coord->dz);
+
+        BoutReal gL = (coord->g11(i - 1, j) + coord->g11(i, j)) *
+                          (fs(i, j, k) - fs(i - 1, j, k)) /
+                          (coord->dx(i - 1, j) + coord->dx(i, j)) +
+                      0.5 * (coord->g13(i - 1, j) + coord->g13(i, j)) *
+                          (fs(i - 1, j, kp) - fs(i - 1, j, km) + f(i, j, kp) -
+                           f(i, j, km)) /
+                          (4. * coord->dz);
+
+        BoutReal gD = coord->g13(i, j) * (fs(i + 1, j, km) - fs(i - 1, j, km) +
+                                         fs(i + 1, j, k) - fs(i - 1, j, k)) /
+                          (4. * coord->dx(i, j)) +
+                      coord->g33(i, j) * (fs(i, j, k) - fs(i, j, km)) / coord->dz;
+
+        BoutReal gU = coord->g13(i, j) * (fs(i + 1, j, kp) - fs(i - 1, j, kp) +
+                                         fs(i + 1, j, k) - fs(i - 1, j, k)) /
+                          (4. * coord->dx(i, j)) +
+                      coord->g33(i, j) * (fs(i, j, kp) - fs(i, j, k)) / coord->dz;
+
+        // Flow right
+        BoutReal flux = gR * 0.25 * (coord->J(i + 1, j) + coord->J(i, j)) *
+                        (as(i + 1, j, k) + as(i, j, k));
+
+        result(i, j, k) += flux / (coord->dx(i, j) * coord->J(i, j));
+        // result(i+1,j,k) -= flux / (coord->dx(i+1,j)*coord->J(i+1,j));
+
+        // Flow left
+        flux = gL * 0.25 * (coord->J(i - 1, j) + coord->J(i, j)) *
+               (as(i - 1, j, k) + as(i, j, k));
+
+        result(i, j, k) -= flux / (coord->dx(i, j) * coord->J(i, j));
+        // result(i-1,j,k) += flux / (coord->dx(i+1,j)*coord->J(i+1,j));
+
+        // Flow up
+
+        flux = gU * 0.5 * (as(i, j, k) + as(i, j, kp)) / coord->dz;
+        result(i, j, k) += flux;
+        // result(i,j,kp) -= flux;
+
+        flux = gD * 0.5 * (as(i, j, k) + as(i, j, km)) / coord->dz;
+        result(i, j, k) -= flux;
+        // result(i,j,km) += flux;
+      }
+ 
   return result;
 }
 

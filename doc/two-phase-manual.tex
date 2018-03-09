@@ -23,6 +23,11 @@
 \newcommand{\bvec}{\mathbf{b}}
 \newcommand{\deriv}[2]{\frac{\partial #1}{\partial #2}}
 
+\newcommand{\lr}[1]{\left( #1 \right)}
+\newcommand{\slr}[1]{\left[ #1 \right]}
+
+\newcommand{\ey}{\ensuremath{\mathbf{e}_y}}
+
 \pagestyle{fancy}
 %\fancyhead{}
 \fancyfoot{}% Clear header & footer
@@ -34,7 +39,7 @@
 % Titling
 \title{ Two-phase flow model }% Your title
 \author{ Ben Dudson }% Your author
-\date{ 14$^{th}$ March 2017 }% Your date
+\date{ 8$^{th}$ March 2018 }% Your date
 \makeatletter
 % Definition of proc.cls' \maketitle:
 \def\@maketitle{% 
@@ -125,6 +130,118 @@ Finally this gives the equation for the vorticity $\omega$:
 \end{equation}
 
 In this model the Poisson brackets are implemented using Arakawa's $2^{nd}$-order advection scheme.
+
+\subsection{Viscosity}
+
+Three models for the viscosity term are included, chosen in the input file
+by setting \texttt{visc\_method}.
+
+\subsubsection{Simple vorticity diffusion}
+\label{sec:visc0}
+
+The simplest model assumes constant density and viscosity
+\begin{equation}
+  \frac{\partial\omega}{\partial t} = \nu\nabla^2\omega + \cdots
+  \label{eq:vorticity_visc}
+\end{equation}
+This is a diffusion equation for the vorticity.
+
+\subsubsection{Corrected vorticity diffusion}
+
+If $\mu$ is not constant, then the simple viscosity term can become an
+energy source rather than a sink. To see this, calculate the change
+in kinetic energy by multiplying the vorticity equation~\ref{eq:vorticity_visc}
+by $\psi$ and integrating over the simulation volume.
+
+\begin{eqnarray}
+  \psi \frac{\partial\omega}{\partial t} &=& \psi\nu\nabla^2\omega \\
+  \frac{\partial\psi\omega}{\partial t} - \frac{\partial\psi}{\partial t}\omega &=& \nabla\cdot\left(\psi\nu\nabla\omega\right) - \nabla\omega\cdot\nabla\left(\psi\nu\right) \\
+  &=&  \nabla\cdot\left(\psi\nu\nabla\omega\right) -\nu \nabla\omega\cdot\nabla\psi - \psi\nabla\omega\cdot\nabla\nu 
+\end{eqnarray}
+The right hand side becomes:
+\begin{eqnarray}
+  \nabla\omega\cdot\nabla\psi &=& \nabla\cdot\lr{\omega\nabla\psi} - \omega\nabla^2\psi \\
+  &=& \nabla\cdot\lr{\omega\nabla\psi} - \rho\left|\nabla^2\psi\right|^2
+\end{eqnarray}
+where the last step assumes $\rho$ is constant. The left hand side
+\begin{eqnarray}
+  \psi\omega = \psi\nabla\cdot\lr{\rho\nabla\psi} &=& \nabla\cdot\lr{\rho\psi\nabla\psi} -\rho\nabla\psi\cdot\nabla\psi  \\
+  &=& \nabla\cdot\lr{\rho\psi\nabla\psi} -\rho\left|\nabla\psi\right|^2 \\
+  \frac{\partial\psi}{\partial t}\omega = \frac{\partial\psi}{\partial t}\nabla\cdot\lr{\rho\nabla\psi} &=& \nabla\cdot\lr{\rho\frac{\partial\psi}{\partial t}\nabla\psi} - \rho\nabla\psi\cdot\nabla\frac{\partial\psi}{\partial t} \\
+  &=& \nabla\cdot\lr{\rho\frac{\partial\psi}{\partial t}\nabla\psi} - \frac{1}{2}\rho\frac{\partial}{\partial t}\left|\nabla\psi\right|^2
+\end{eqnarray}
+After integrating over the domain, the divergence terms turn into surface integrals over the boundary. If $\psi = 0$ or $\nabla\psi\cdot d\mathbf{S}$ perpendicular to the surface $d\mathbf{S}$ then these surface terms vanish. Therefore:
+\begin{eqnarray}
+ -\frac{\partial}{\partial t}\left[\frac{1}{2}\rho\left|\nabla\psi\right|^2\right] &=& \rho\left|\nabla^2\psi\right|^2 - \psi\nabla\omega\cdot\nabla\nu
+\end{eqnarray}
+{\bf NOTE}: Parts of this derivation assume $\rho$ is constant.
+    
+The left hand side represents the change in kinetic energy; the first term on the right
+is a damping term which depends on the gradient of the flow speed.
+Note that it always has the same sign (damping). The last term can be positive
+or negative, depending on the gradients of vorticity
+$\omega$ and viscosity $\nu$. This term can be cancelled by adding a term
+to the vorticity equation:
+
+\begin{equation}
+  \frac{\partial\omega}{\partial t} = \nu\nabla^2\omega + \nabla\omega\cdot\nabla\nu = \nabla\cdot\left(\nu \nabla\omega\right)
+  \label{eq:vorticity_visc1}
+\end{equation}
+
+\subsubsection{Stress tensor derivation}
+
+In the momentum equation the stress tensor $\Pi$ appears as
+\begin{equation}
+\frac{\partial}{\partial t}\left(\rho \mathbf{u}\right) = \ldots + \nabla\cdot\Pi 
+\end{equation}
+and for a Newtonian fluid can be written as
+\begin{equation}
+  \Pi_{ij} = \mu\slr{\deriv{u_i}{x_j} + \deriv{u_j}{u_i} - \frac{2}{3}\delta_{ij} \deriv{u_k}{x_k}}
+\end{equation}
+where $\mu = \rho\nu$ depends on fluid density and kinematic viscosity $\nu$.
+For an incompressible fluid the last term vanishes ($\nabla\cdot\mathbf{u} = 0$).
+
+The vorticity equation viscosity term is found by applying
+$\ey\cdot\nabla\times$ to the momentum equation. In tensor notation
+this is
+\begin{eqnarray}
+  \Pi_\omega &=& \epsilon_{ykj}\partial_k\slr{\partial_i\lr{\mu \partial_j u_i
+                                            + \mu \partial_i u_j}} \\
+  &=& \lr{\partial_z^2 - \partial_x^2}\lr{\mu\partial_x u_z + \mu \partial_z u_x} + \partial_{xz}^2\lr{2\mu\partial_x u_x - 2\mu \partial_zu_z}
+\end{eqnarray}
+
+The components of the velocity can be calculated from the definition:
+\begin{equation}
+  \mathbf{u} = \nabla\times\lr{\ey \psi} = \nabla\psi \times\ey
+\end{equation}
+so
+\begin{equation}
+  u_i = \epsilon_{ijy}\partial_j \psi \qquad u_x = -\partial_z\psi \qquad u_z = \partial_x\psi
+\end{equation}
+so
+\[
+\partial_x u_x - \partial_z u_z = -2\partial_{xz}^2\psi
+\]
+\[
+\partial_x u_z + \partial_zu_x = \partial_x^2\psi - \partial_z^2\psi
+\]
+Inserting and simplifying gives
+\begin{eqnarray}
+  \Pi_\omega &=& -\mu\lr{\partial_x^2 + \partial_z^2}^2\psi - \lr{\partial_x \mu - \partial_z\mu}\lr{\partial_x \psi - \partial_z \psi} - 4\lr{\partial_{xz}^2\mu}\lr{\partial_{xz}^2\psi} \\
+  &=& -\nabla_\perp^2\lr{\mu \nabla_\perp^2\psi} + 2\slr{\partial_x^2\mu \partial_z^2\psi + \partial_z^2\mu \partial_x^2\psi - 2\lr{\partial_{xz}^2\mu}\lr{\partial_{xz}^2\psi}}
+\end{eqnarray}
+where $\nabla_\perp^2 = \partial_x^2 + \partial_z^2$
+
+The Poisson bracket can be written as
+\begin{equation}
+\left[f, g\right] = \partial_zf\partial_xg - \partial_xf\partial_zg
+\end{equation}
+so
+\begin{equation}
+  \Pi_\omega = -\nabla_\perp^2\lr{\mu \nabla_\perp^2\psi} - 2\slr{\partial_x\mu,\partial_z\psi} - 2\slr{\partial_x\psi, \partial_z\mu}
+\end{equation}
+
+In the case that $\mu$ is constant, this reduces to the simple model (section~\ref{sec:visc0}).
 
 \subsection{Calculation of curvature}
 \label{sec:curvature}
