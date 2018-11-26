@@ -3,6 +3,7 @@
 #include <bout/physicsmodel.hxx>
 #include <derivs.hxx>
 #include <invert_laplace.hxx>
+#include <field_factory.hxx>
 
 const Field3D Div_VOF(const Field3D &n, const Field3D &f, BoutReal D=1.0);
 const Field3D Curvature(const Field3D &c, BoutReal eps=1e-5);
@@ -37,6 +38,8 @@ private:
   
   bool boussinesq; ///< Assume constant density in inertia?
   BoutReal vof_D; ///< Anti-diffusion for VOF advection
+
+  Field3D Svort;  ///< External vorticity source
 protected:
   /// Initialise simulation
   ///
@@ -85,6 +88,9 @@ protected:
       }
     }
 
+    // Read vorticity source from input
+    Svort = FieldFactory::get()->create3D("source", Options::getRoot()->getSection("vorticity"), mesh);
+    
     psi = 0.0; // Starting value for Picard
     
     return 0;
@@ -176,6 +182,7 @@ protected:
       - bracket(psi, vorticity, BRACKET_ARAKAWA)
       - gravity * DDZ(density)
       - surf_force
+      + Svort
       ;
 
     
