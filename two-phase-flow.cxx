@@ -4,6 +4,7 @@
 #include <derivs.hxx>
 #include <invert_laplace.hxx>
 #include <field_factory.hxx>
+#include <bout/constants.hxx>
 
 const Field3D Div_VOF(const Field3D &n, const Field3D &f, BoutReal D=1.0);
 const Field3D Curvature(const Field3D &c, BoutReal eps=1e-5);
@@ -41,13 +42,15 @@ private:
   BoutReal vof_D; ///< Anti-diffusion for VOF advection
 
   Field3D Svort;  ///< External vorticity source
+  FieldGeneratorPtr Svort_generator; ///< Calculates the source in time
+  bool have_Svort; /// True if there is an external source
 protected:
   /// Initialise simulation
   ///
   /// @param[in] restarting  Is this simulation restarting?
   ///
   /// @returns zero on success
-  int init(bool restarting) {
+  int init(bool UNUSED(restarting)) {
     // Read input options
     auto opt = Options::root()["model"];
     OPTION(opt, density0, 1.0); // Water
@@ -66,25 +69,7 @@ protected:
     OPTION(opt, vof_D, 0.1);
     
     // Specify evolving variables
-    SOLVE_FOR(vorticity);
-
-    if (Options::root()["vof1"]["evolve"].withDefault<bool>(true)) {
-      // Allow evolution of VOF1 to be turned off
-      SOLVE_FOR(vof1);
-    } else {
-      vof1 = FieldFactory::get()->create3D(Options::root()["vof1"]["function"].withDefault<std::string>("0.0"),
-                                           &Options::root()["vof1"],
-                                           mesh);
-    }
-    
-    if (Options::root()["vof2"]["evolve"].withDefault<bool>(true)) {
-      // Allow evolution of VOF2 to be turned off
-      SOLVE_FOR(vof2);
-    } else {
-      vof2 = FieldFactory::get()->create3D(Options::root()["vof2"]["function"].withDefault<std::string>("0.0"),
-                                           &Options::root()["vof2"],
-                                           mesh);
-    }
+    SOLVE_FOR(vorticity, vof1, vof2);
     
     // Save the stream function at each output
     SAVE_REPEAT(psi);
@@ -114,10 +99,17 @@ protected:
       }
     }
 
-    // Read vorticity source from input
-    Svort = FieldFactory::get()->create3D(
-        Options::root()["vorticity"]["source"].withDefault<std::string>("0.0"),
-        &Options::root()["vorticity"], mesh);
+    // Check if there is a source of vorticity
+    have_Svort = Options::root()["vorticity"]["source"].isSet();
+    if (have_Svort) {
+      // Read vorticity source from input
+      Svort_generator =
+          FieldFactory::get()->parse(Options::root()["vorticity"]["source"],
+                                     &Options::root()["vorticity"]);
+      Svort.allocate(); // Values will be set in rhs()
+    } else {
+      Svort = 0.0;
+    }
 
     psi = 0.0; // Starting value for Picard
     
@@ -132,7 +124,18 @@ protected:
   int rhs(BoutReal time) {
     // Communicate guard cells
     mesh->communicate(vof1, vof2, vorticity);
-    
+
+    if (have_Svort) {
+      // Calculate vorticity at this time
+      BOUT_FOR(i, Svort.getRegion("RGN_ALL")) {
+        Svort[i] =
+            Svort_generator->generate(mesh->GlobalX(i.x()), TWOPI * mesh->GlobalY(i.y()),
+                          TWOPI * static_cast<BoutReal>(i.z()) /
+                              static_cast<BoutReal>(mesh->LocalNz),
+                          time);
+      }
+    }
+
     // Calculate density and viscosity, given vof
     
     for (const auto &i : vof1) {
