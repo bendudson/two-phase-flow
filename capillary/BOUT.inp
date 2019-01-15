@@ -58,7 +58,7 @@ bndry_all = neumann
 # Initial condition. This produces streams with zero net vorticity
 function = 0.0
 
-[vof]
+[vof1]
 
 bndry_all=neumann
 

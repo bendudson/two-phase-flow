@@ -1,7 +1,7 @@
-Incompressible two-phase flow in 2D
-===================================
+Incompressible three phase flow in 2D
+====================================
 
-A simple model for two fluids (e.g. liquid and gas) in 2D,
+A simple model for three fluids (e.g. liquid, gas, solid) in 2D,
 with different densities and viscosities. Includes models
 for buoyancy and surface tension.
 
