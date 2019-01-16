@@ -60,7 +60,7 @@ bndry_all = neumann
 # Initial condition. This produces streams with zero net vorticity
 function = 0.0
 
-[vof1] # Air
+[vof] # Air
 
 bndry_core = dirichlet(0.0)
 bndry_sol = dirichlet(1.0)
@@ -77,4 +77,3 @@ zl = (z/pi)*3 - 1
 # This function is non-zero between 0 < zl < 1
 function = H( zl - x ) * H( 2 - x - zl )
 
-evolve = true # Evolve in time?

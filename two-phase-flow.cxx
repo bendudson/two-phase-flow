@@ -17,8 +17,8 @@ const Field3D Div_Perp_Lap_FV(const Field3D &a, const Field3D &f, bool xflux);
 class TwoPhase : public PhysicsModel {
 private:
   Field3D vorticity; ///< Curl(momentum) with v = Curl(psi)
-  Field3D vof1, vof2;   ///< Volume of Fluid for fluid 1 and fluid 2.
-  // The fraction of fluid 0 is (1-vof1-vof2)
+  Field3D vof, vof2;   ///< Volume of Fluid for fluid 1 and fluid 2.
+  // The fraction of fluid 0 is (1-vof-vof2)
   
   Field3D psi; ///< Stream function, calculated from vorticity
   
@@ -44,6 +44,9 @@ private:
   Field3D Svort;  ///< External vorticity source
   FieldGeneratorPtr Svort_generator; ///< Calculates the source in time
   bool have_Svort; /// True if there is an external source
+
+  // No-slip boundary conditions
+  bool no_slip_x_down, no_slip_x_up;
 protected:
   /// Initialise simulation
   ///
@@ -62,6 +65,9 @@ protected:
     OPTION(opt, surface_tension, 0.0);
     OPTION(opt, curv_method, 0);
     OPTION(opt, visc_method, 0);
+
+    OPTION(opt, no_slip_x_down, false);
+    OPTION(opt, no_slip_x_up, false);
     
     OPTION(opt, gravity, 0.1);
    
@@ -69,7 +75,7 @@ protected:
     OPTION(opt, vof_D, 0.1);
     
     // Specify evolving variables
-    SOLVE_FOR(vorticity, vof1, vof2);
+    SOLVE_FOR(vorticity, vof, vof2);
     
     // Save the stream function at each output
     SAVE_REPEAT(psi);
@@ -86,11 +92,11 @@ protected:
     viscosity.allocate();
 
     // Make sure vof is between 0 and 1
-    for (const auto &i : vof1) {
-      if (vof1[i] < 0.0) {
-        vof1[i] = 0.0;
-      }else if (vof1[i] > 1.0) {
-        vof1[i] = 1.0;
+    for (const auto &i : vof) {
+      if (vof[i] < 0.0) {
+        vof[i] = 0.0;
+      }else if (vof[i] > 1.0) {
+        vof[i] = 1.0;
       }
       if (vof2[i] < 0.0) {
         vof2[i] = 0.0;
@@ -123,8 +129,10 @@ protected:
   /// @returns zero on success
   int rhs(BoutReal time) {
     // Communicate guard cells
-    mesh->communicate(vof1, vof2, vorticity);
+    mesh->communicate(vof, vof2, vorticity);
 
+    Coordinates *coord = mesh->getCoordinates();
+    
     if (have_Svort) {
       // Calculate vorticity at this time
       BOUT_FOR(i, Svort.getRegion("RGN_ALL")) {
@@ -138,8 +146,8 @@ protected:
 
     // Calculate density and viscosity, given vof
     
-    for (const auto &i : vof1) {
-      BoutReal fluid1 = vof1[i];
+    for (const auto &i : vof) {
+      BoutReal fluid1 = vof[i];
       // Make sure fraction of fluid is between 0 and 1
       if (fluid1 < 0.0) {
         fluid1 = 0.0;
@@ -176,14 +184,14 @@ protected:
       // Note we have to smooth the VOF function
       // to reduce spurious curvatures
     
-      Field3D vof_smooth = vof1;
+      Field3D vof_smooth = vof;
       for (int i=0;i<6;i++) {
         vof_smooth = smoothXZ(vof_smooth);
       }
       kappa = Curvature(vof_smooth);
     } else if (curv_method == 1) {
       // Use Height Function method
-      kappa = Curvature_HF(vof1);
+      kappa = Curvature_HF(vof);
     } else {
       throw BoutException("Unrecognised curvature calculation method");
     }
@@ -220,13 +228,48 @@ protected:
       } while( (absdiff/psi_max > 1e-5) && (absdiff > 1e-9));
     }
     mesh->communicate(psi); // Communicates guard cells
+
+    // Boundary condition on vorticity
+    // Thom's formula, imposing no-slip conditions on X boundaries
+    // https://web.math.princeton.edu/~weinan/papers/cfd5.pdf
+    if (no_slip_x_down && mesh->firstX()) {
+      // Loop over the boundary at x = xstart -1/2
+      for (int y = mesh->ystart; y <= mesh->yend; y++) {
+        for (int z = 0; z < mesh->LocalNz; z++) {
+          // Value of vorticity on the boundary
+          BoutReal vort_bndry = density(mesh->xstart, y, z) * 2 *
+                                psi(mesh->xstart, y, z) /
+                                SQ(0.5 * coord->dx(mesh->xstart, y));
+
+          vorticity(mesh->xstart - 1, y, z) =
+              2 * vort_bndry - vorticity(mesh->xstart, y, z);
+        }
+      }
+    }
+
+    if (no_slip_x_up && mesh->lastX()) {
+      // Loop over the boundary at x = xend +1/2
+      for (int y = mesh->ystart; y <= mesh->yend; y++) {
+        for (int z = 0; z < mesh->LocalNz; z++) {
+          // Value of vorticity on the boundary
+          // Note that spacing between boundary and cells is dx/2
+          BoutReal vort_bndry = density(mesh->xend, y, z) * 2 *
+                                psi(mesh->xend, y, z) /
+                                SQ(0.5 * coord->dx(mesh->xend, y));
+
+          vorticity(mesh->xend + 1, y, z) =
+              2 * vort_bndry - vorticity(mesh->xend, y, z);
+        }
+      }
+    }
+
     
     // Vof, advected by flow
-    ddt(vof1) = -Div_VOF(vof1, psi, vof_D);
+    ddt(vof) = -Div_VOF(vof, psi, vof_D);
     ddt(vof2) = -Div_VOF(vof2, psi, vof_D);
     
     // vorticity equation
-    surf_force = surface_tension * bracket(kappa, vof1, BRACKET_ARAKAWA);
+    surf_force = surface_tension * bracket(kappa, vof, BRACKET_ARAKAWA);
 
     ddt(vorticity) =
       - bracket(psi, vorticity, BRACKET_ARAKAWA)
