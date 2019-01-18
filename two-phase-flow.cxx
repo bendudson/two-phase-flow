@@ -113,6 +113,8 @@ protected:
           FieldFactory::get()->parse(Options::root()["vorticity"]["source"],
                                      &Options::root()["vorticity"]);
       Svort.allocate(); // Values will be set in rhs()
+
+      SAVE_REPEAT(Svort);
     } else {
       Svort = 0.0;
     }
