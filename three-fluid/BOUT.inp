@@ -1,0 +1,83 @@
+nout = 100   # Number of output steps
+timestep = 1 # Time between outputs
+
+myg = 0  # No guard cells in Y since a 2D simulation
+
+ZMAX = mesh:Lz/(2*pi) # Sets dz
+
+[mesh]
+
+Lx = 5  # X size [m]
+Lz = 100  # Z size [m]
+
+nx = 68    # number of points in X, including 4 guard cells
+ny = 1      # Axisymmetric
+nz = 256    # Number of points in Z
+
+xpos = x * Lx          # X position
+zpos = z * Lz / (2*pi) # Z position
+
+dx = Lx/(nx-4)
+
+[mesh:ddx]
+upwind = W3  # Upwinding scheme in X (W3 = WENO3)
+
+[mesh:ddz]
+upwind = W3  # Upwinding scheme in Z
+
+[laplace]    # Laplacian inversion for vorticity -> stream function (psi)
+type=cyclic
+
+[solver]     # Time integration solver
+maxl=10      # Maximum number of linear iterations per nonlinear step
+mxstep=100000
+
+[model]
+
+# density of each fluid [kg/m^3]
+density0 = 1000  # water = 1e3
+density1 = 1.225  # air = 1.225
+density2 = 1905  # Wet sand, from https://www.engineeringtoolbox.com/dirt-mud-densities-d_1727.html
+
+# Kinematic viscosity of each fluid [m^2/s]
+viscosity0 = 1e-6     # water ~ 1mm^2/s (1e-6)
+viscosity1 = 1.48e-6  # air ~ 1.48e-5
+viscosity2 = 100 # Sand. UNKNOWN, varies widely with shear
+
+surface_tension = 7.2e-2 # 72 mN / m for water-air
+curv_method = 0  # 0 = Finite Differences on smoothed VOF; 1 = Height Function method
+
+gravity = 9.81   # Acceleration due to gravity [m/s^2]
+
+vof_D = 1   # Anti-diffusion in VOF advection
+boussinesq = false  # Neglect variations of density in inertia?
+
+[vorticity]
+
+# Boundary conditions
+bndry_all = neumann
+
+# Initial condition. This produces streams with zero net vorticity
+function = 0.0
+
+# Source of vorticity, driving waves
+zn = z/(2*pi)
+#source = 1.0 * sin(t) * (exp( -((x-0.5)^2 + (zn-0.2)^2)/(0.05^2) ) - exp( -((x-0.5)^2 + (zn-0.15)^2)/(0.05^2)))
+
+[vof] # Air
+
+bndry_core = dirichlet(0.0)
+bndry_sol = dirichlet(1.0)
+
+function = H(x - 0.5) * (1 - vof2:function) 
+
+[vof2] # Sand
+
+bndry_core = dirichlet(1.0)
+bndry_sol = dirichlet(0.0)
+
+zl = (z/pi)*3 - 1
+
+# This function is non-zero between 0 < zl < 1
+function = H( zl - x ) * H( 2 - x - zl )
+

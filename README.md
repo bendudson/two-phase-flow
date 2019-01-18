@@ -1,7 +1,7 @@
-Incompressible two-phase flow in 2D
-===================================
+Incompressible two/three phase flow in 2D
+=========================================
 
-A simple model for two fluids (e.g. liquid and gas) in 2D,
+A simple model for two or three fluids (e.g. liquid, gas, solid) in 2D,
 with different densities and viscosities. Includes models
 for buoyancy and surface tension.
 
@@ -32,3 +32,25 @@ to analytic theory and previous results
 
 $ python capillary.py
 
+
+Flow in a pipe
+--------------
+
+Simple flow of a single fluid in a pipe. Starts with an initial flow
+which damps due to viscosity.  Includes no-slip boundary conditions on
+the walls, using Thom's formula.
+
+input in `pipe` directory
+
+
+Three fluid
+-----------
+
+Models air, water and sand with a simple model. A pile of sand in the
+middle of the domain acts to break waves in the water around it.
+
+Note that because the sand is evolved as a simple fluid, it slowly
+collapses. A large viscosity is used to slow down the rate at which
+this happens.
+
+input in `three-fluid`
