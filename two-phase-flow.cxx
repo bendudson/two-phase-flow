@@ -32,6 +32,8 @@ private:
   
   BoutReal density0, density1, density2; ///< Density of each fluid
   BoutReal viscosity0, viscosity1, viscosity2; ///< Kinematic viscosity of each fluid
+  FieldGeneratorPtr viscosity0_generator, viscosity1_generator, viscosity2_generator;
+  
   BoutReal surface_tension; ///< N/m. Note: Only surface tension between fluid 0 and fluid 1
 
   BoutReal gravity; ///< Acceleration due to gravity
@@ -59,9 +61,15 @@ protected:
     OPTION(opt, density0, 1.0); // Water
     OPTION(opt, density1, 0.1); // Air
     OPTION(opt, density2, 10.0); // Sand
-    OPTION(opt, viscosity0, 1.0);
-    OPTION(opt, viscosity1, 0.1);
-    OPTION(opt, viscosity2, 0.1);
+
+    // Generators so that the viscosity can be a function of time
+    viscosity0_generator =
+      FieldFactory::get()->parse(opt["viscosity0"].withDefault<std::string>("1.0"), &opt);
+    viscosity1_generator =
+        FieldFactory::get()->parse(opt["viscosity1"].withDefault<std::string>("0.1"), &opt);
+    viscosity2_generator =
+        FieldFactory::get()->parse(opt["viscosity2"].withDefault<std::string>("0.1"), &opt);
+    
     OPTION(opt, surface_tension, 0.0);
     OPTION(opt, curv_method, 0);
     OPTION(opt, visc_method, 0);
@@ -82,6 +90,8 @@ protected:
     
     // Save the curvature and surface forcing term
     SAVE_REPEAT(kappa, surf_force);
+
+    SAVE_REPEAT(viscosity);
     
     // Create Laplacian inversion solver
     laplace = Laplacian::create(&Options::root()["laplace"]);
@@ -146,6 +156,11 @@ protected:
       }
     }
 
+    // Update viscosities at the current time
+    viscosity0 = viscosity0_generator->generate(0,0,0,time);
+    viscosity1 = viscosity1_generator->generate(0,0,0,time);
+    viscosity2 = viscosity2_generator->generate(0,0,0,time);
+    
     // Calculate density and viscosity, given vof
     
     for (const auto &i : vof) {
