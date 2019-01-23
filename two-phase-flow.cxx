@@ -73,7 +73,7 @@ protected:
     
     OPTION(opt, surface_tension, 0.0);
     OPTION(opt, curv_method, 0);
-    OPTION(opt, visc_method, 0);
+    OPTION(opt, visc_method, 1);
 
     OPTION(opt, no_slip_x_down, false);
     OPTION(opt, no_slip_x_up, false);
@@ -274,15 +274,15 @@ protected:
           ((psi[ixp.zp()] - psi[ixm.zp()]) - (psi[ixp.zm()] - psi[ixm.zm()])) /
           (4. * dx * dz);
 
-      shear_rate[i] = sqrt(SQ(psi_xx - psi_zz) + SQ(psi_xz));
+      shear_rate[i] = sqrt(2.*(SQ(psi_xx - psi_zz) + SQ(psi_xz)));
       
       // Now calculate viscosity, which may use shear rate
 
       // Update kinematic viscosity coefficients at the current time
-      // Note: The variable "x" is (ab)used to represent the shear rate
-      BoutReal viscosity0 = viscosity0_generator->generate(shear_rate[i], 0, 0, time);
-      BoutReal viscosity1 = viscosity1_generator->generate(shear_rate[i], 0, 0, time);
-      BoutReal viscosity2 = viscosity2_generator->generate(shear_rate[i], 0, 0, time);
+      // Note: The variable "y" is (ab)used to represent the shear rate
+      BoutReal viscosity0 = viscosity0_generator->generate(0, shear_rate[i], 0, time);
+      BoutReal viscosity1 = viscosity1_generator->generate(0, shear_rate[i], 0, time);
+      BoutReal viscosity2 = viscosity2_generator->generate(0, shear_rate[i], 0, time);
       
       /// Kinematic viscosity
       viscosity[i] = fluid0[i] * viscosity0 + fluid1[i] * viscosity1 + fluid2[i] * viscosity2;

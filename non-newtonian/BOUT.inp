@@ -39,8 +39,8 @@ density0 = 1000  # water = 1e3
 density1 = 1000  # air = 1.225
 
 # Kinematic viscosity of each fluid [m^2/s]
-# Note: Here x is the shear rate in s^-1
-viscosity0 = 1e-4 / (1 + (x/1e-4)^2)     # water ~ 1mm^2/s (1e-6)
+# Note: Here y is the shear rate in s^-1
+viscosity0 = 1e-4 / (1 + (y/1e-4)^2)     # water ~ 1mm^2/s (1e-6)
 viscosity1 = 1e-6     # air ~ 1.48e-5
 
 surface_tension = 7.2e-2 # 72 mN / m for water-air

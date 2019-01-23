@@ -16,6 +16,8 @@
 \usepackage{amsmath}
 \usepackage{color}
 
+\DeclareMathOperator{\Tr}{Tr}
+
 \definecolor{orange}{rgb}{1,0.5,0}
 
 \newcommand{\kpar}{k_{||}}
@@ -39,7 +41,7 @@
 % Titling
 \title{ Two-phase flow model }% Your title
 \author{ Ben Dudson }% Your author
-\date{ 8$^{th}$ March 2018 }% Your date
+\date{ 23$^{rd}$ January 2018 }% Your date
 \makeatletter
 % Definition of proc.cls' \maketitle:
 \def\@maketitle{% 
@@ -60,11 +62,21 @@
 
 \section{Model equations}
 
-Equations for two immiscible incompressible fluids in 2D is solved using the vorticity formulation. The fluid velocity $\mathbf{u}$ is calculated using $\mathbf{u} = \nabla\times\mathbf{\psi}$, where in 2D only only one component of the stream function $\psi$ is needed. All code, inputs and analysis scripts used here are available at \url{https://github.com/bendudson/two-phase-flow}.
+Equations for two or three immiscible incompressible fluids in 2D is
+solved using the vorticity formulation. The fluid velocity
+$\mathbf{u}$ is calculated using $\mathbf{u} =
+\nabla\times\mathbf{\psi}$, where in 2D only only one component of the
+stream function $\psi$ is needed. All code, inputs and analysis
+scripts used here are available at
+\url{https://github.com/bendudson/two-phase-flow}.
 
 \subsection{Fluid interface tracking}
 
-A Volume of Fluid (VOF) approach is used to track the interface between the two phases. A colour field $c$ is $0$ in one fluid, and $1$ in the other, transitioning between $0$ and $1$ at the boundary between them. The density $\rho$ and kinematic viscosity $\nu$ are given by
+A Volume of Fluid (VOF) approach is used to track the interface
+between the two phases. A colour field $c$ is $0$ in one fluid, and
+$1$ in the other, transitioning between $0$ and $1$ at the boundary
+between them. The density $\rho$ and kinematic viscosity $\nu$ are
+given by
 \begin{eqnarray}
 \rho &=& \left(1-c\right)\rho_0 + c \rho_1 \\
 \nu &=& \left(1-c\right)\nu_0 + c \nu_1 \\
@@ -126,12 +138,32 @@ as a Poisson bracket:
 
 Finally this gives the equation for the vorticity $\omega$:
 \begin{equation}
-\frac{\partial\omega}{\partial t} = -\left[\psi, \omega\right] - g\frac{\partial\rho}{\partial z} + \nu\nabla^2\omega - \left[\sigma\kappa, c\right]
+\frac{\partial\omega}{\partial t} = -\left[\psi, \omega\right] - g\frac{\partial\rho}{\partial z} + \nabla\cdot\left(\nu\nabla \omega\right) - \left[\sigma\kappa, c\right]
 \end{equation}
 
 In this model the Poisson brackets are implemented using Arakawa's $2^{nd}$-order advection scheme.
 
 \subsection{Viscosity}
+
+The kinematic viscosity $\nu$ is calculated using the weighted VOF as described above. The viscosity of each fluid is set by the input options \texttt{viscosity0}, \texttt{viscosity1} and \texttt{viscosity2}. These can be constants:
+\begin{verbatim}
+viscosity0 = 1e-6
+\end{verbatim}
+or can depend on time:
+\begin{verbatim}
+viscosity0 = 1e-6 + 1e-6 * t
+\end{verbatim}
+where \texttt{t} has the same units as the output (i.e. seconds if using SI units everywhere).
+
+The viscosity can also depend on the local velocity shear $\gamma$ (units $s^-1$), which is represented by \texttt{y}. For example a shear-thinning non-newtonian fluid might be modelled as\footnote{G.P.Roberts, H.A.Barnes, P.Carew 2001 \url{https://www.sciencedirect.com/science/article/pii/S0009250901002913}}:
+\begin{verbatim}
+viscosity0 = 1e-4 / (1 + (y/1e-4)^2)
+\end{verbatim}
+which is
+\[
+\nu = \frac{10^{-4}}{1 + \left(\gamma/10^{-4}\right)^2}
+\]
+The calculation of $\gamma$ is given in section~\ref{sec:shear_rate}.
 
 Three models for the viscosity term are included, chosen in the input file
 by setting \texttt{visc\_method}.
@@ -146,7 +178,11 @@ The simplest model assumes constant density and viscosity
 \end{equation}
 This is a diffusion equation for the vorticity.
 
-\subsubsection{Corrected vorticity diffusion}
+{\bf Note:} Only use this if density and viscosity are constant.
+If either of these is not true then using this expression results in
+unphysical solutions (unstable oscillations).
+
+\subsubsection{Corrected vorticity diffusion (default)}
 
 If $\mu$ is not constant, then the simple viscosity term can become an
 energy source rather than a sink. To see this, calculate the change
@@ -281,5 +317,53 @@ A sinusoidal perturbation of an interface between two fluids is simulated, based
 \end{figure}
 This indicates that whilst the Finite Difference calculation of curvature gives good agreement, the Height Function method does not. Sharpening the interface by increasing the anti-diffusion $D$ improves the result.
 
+\section{Calculation of shear rate}
+\label{sec:shear_rate}
+
+The expression for the shear $\gamma$ was derived from the discussion here\footnote{DOI: \texttt{10.1615/AtoZ.n.non-newtonian\_fluids} \url{http://www.thermopedia.com/content/986/}}:
+\begin{equation}
+\gamma^2 = \frac{1}{2}\left[\Tr{\left(\mathbf{e}^2\right)} - \left(\Tr\left(\mathbf{e}\right)\right)^2\right]
+\end{equation}
+where $\mathbf{e}$ is the strain rate tensor:
+\begin{eqnarray}
+  \mathbf{e} &=& \nabla\mathbf{u} + \left(\nabla\mathbf{u}\right)^T \\
+  &=& \left(\begin{array}{cc}
+    2\frac{\partial u_x}{\partial x} & \frac{\partial u_x}{\partial z} + \frac{\partial u_z}{\partial x} \\
+    \frac{\partial u_x}{\partial z} + \frac{\partial u_z}{\partial x} & 2\frac{\partial u_x}{\partial z} \end{array}\right) \label{eq:strain_rate} \\
+  &=&  \left(\begin{array}{cc}
+  e_{xx} & e_{xz} \\
+  e_{xz} & e_{zz} \end{array}\right)
+\end{eqnarray}
+
+From this we can get
+\[
+\mathbf{e}^2 =  \left(\begin{array}{cc}
+  e_{xx}^2 + e_{xz}^2 &  \\
+   & e_{zz}^2 + e_{xz}^2 \end{array}\right)
+\]
+(where the off-diagonal terms are not needed, so not given).
+Hence
+\begin{eqnarray*}
+  \Tr\left(\mathbf{e}^2\right) &=& e_{xx}^2 + 2e_{xz}^2 + e_{zz}^2 \\
+  \Tr\left(\mathbf{e}\right) &=& e_{xx} + e_{zz} \\
+  \left(\Tr\left(\mathbf{e}\right)\right)^2 &=& e_{xx}^2 + 2e_{xx}e_{zz} + e_{zz}^2
+\end{eqnarray*}
+And so
+\begin{equation}
+  \gamma^2 = \frac{1}{2}\left(2e_{xz}^2 - e_{xx}e_{zz}\right)
+\end{equation}
+
+Inserting the expressions from equation~\ref{eq:strain_rate} gives:
+\[
+2e_{xz}^2 - e_{xx}e_{zz} = 4\left(\frac{\partial u_x}{\partial z} + \frac{\partial u_z}{\partial x}\right)^2 - 4\frac{\partial u_x}{\partial x}\frac{\partial u_z}{\partial z}
+\]
+Then using $\mathbf{u} = \nabla\times\left(\psi\hat{\mathbf{y}}\right)$ gives
+\[
+u_x = -\frac{\partial \psi}{\partial z} \qquad u_z = \frac{\partial \psi}{\partial x}
+\]
+so
+\[
+\gamma^2 = 2\left(\frac{\partial^2 \psi}{\partial x^2} - \frac{\partial^2 \psi}{\partial z^2}\right)^2 + 2\left(\frac{\partial^2 \psi}{\partial x\partial z}\right)^2
+\]
 
 \end{document}
