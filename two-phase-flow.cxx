@@ -31,7 +31,8 @@ private:
   int visc_method; ///< Viscosity method
   
   BoutReal density0, density1, density2; ///< Density of each fluid
-  BoutReal viscosity0, viscosity1, viscosity2; ///< Kinematic viscosity of each fluid
+  FieldGeneratorPtr viscosity0_generator, viscosity1_generator, viscosity2_generator;
+  
   BoutReal surface_tension; ///< N/m. Note: Only surface tension between fluid 0 and fluid 1
 
   BoutReal gravity; ///< Acceleration due to gravity
@@ -45,6 +46,8 @@ private:
   FieldGeneratorPtr Svort_generator; ///< Calculates the source in time
   bool have_Svort; /// True if there is an external source
 
+  Field3D shear_rate; ///< Shear rate (gamma) in s^-1
+  
   // No-slip boundary conditions
   bool no_slip_x_down, no_slip_x_up;
 protected:
@@ -59,12 +62,18 @@ protected:
     OPTION(opt, density0, 1.0); // Water
     OPTION(opt, density1, 0.1); // Air
     OPTION(opt, density2, 10.0); // Sand
-    OPTION(opt, viscosity0, 1.0);
-    OPTION(opt, viscosity1, 0.1);
-    OPTION(opt, viscosity2, 0.1);
+
+    // Generators so that the viscosity can be a function of time
+    viscosity0_generator =
+      FieldFactory::get()->parse(opt["viscosity0"].withDefault<std::string>("1.0"), &opt);
+    viscosity1_generator =
+        FieldFactory::get()->parse(opt["viscosity1"].withDefault<std::string>("0.1"), &opt);
+    viscosity2_generator =
+        FieldFactory::get()->parse(opt["viscosity2"].withDefault<std::string>("0.1"), &opt);
+    
     OPTION(opt, surface_tension, 0.0);
     OPTION(opt, curv_method, 0);
-    OPTION(opt, visc_method, 0);
+    OPTION(opt, visc_method, 1);
 
     OPTION(opt, no_slip_x_down, false);
     OPTION(opt, no_slip_x_up, false);
@@ -82,6 +91,9 @@ protected:
     
     // Save the curvature and surface forcing term
     SAVE_REPEAT(kappa, surf_force);
+
+    SAVE_REPEAT(viscosity);
+    SAVE_REPEAT(shear_rate);
     
     // Create Laplacian inversion solver
     laplace = Laplacian::create(&Options::root()["laplace"]);
@@ -136,7 +148,7 @@ protected:
     Coordinates *coord = mesh->getCoordinates();
     
     if (have_Svort) {
-      // Calculate vorticity at this time
+      // Calculate vorticity source at this time
       BOUT_FOR(i, Svort.getRegion("RGN_ALL")) {
         Svort[i] =
             Svort_generator->generate(mesh->GlobalX(i.x()), TWOPI * mesh->GlobalY(i.y()),
@@ -145,39 +157,44 @@ protected:
                           time);
       }
     }
-
-    // Calculate density and viscosity, given vof
     
+    // Calculate density and viscosity, given vof
+    // Need to calculate fluid fractions
+    // 
+    // Note: Dependency density -> psi -> shear_rate -> viscosity
+    Field3D fluid0, fluid1, fluid2; 
+    fluid0.allocate();
+    fluid1.allocate();
+    fluid2.allocate();
     for (const auto &i : vof) {
-      BoutReal fluid1 = vof[i];
+      fluid1[i] = vof[i];
       // Make sure fraction of fluid is between 0 and 1
-      if (fluid1 < 0.0) {
-        fluid1 = 0.0;
-      } else if (fluid1 > 1.0) {
-        fluid1 = 1.0;
+      if (fluid1[i] < 0.0) {
+        fluid1[i] = 0.0;
+      } else if (fluid1[i] > 1.0) {
+        fluid1[i] = 1.0;
       }
 
-      BoutReal fluid2 = vof2[i];
+      fluid2[i] = vof2[i];
       // Make sure fraction of fluid is between 0 and 1
-      if (fluid2 < 0.0) {
-        fluid2 = 0.0;
-      } else if (fluid2 > 1.0) {
-        fluid2 = 1.0;
+      if (fluid2[i] < 0.0) {
+        fluid2[i] = 0.0;
+      } else if (fluid2[i] > 1.0) {
+        fluid2[i] = 1.0;
       }
 
       // Check that the sum is <= 1
-      BoutReal sum12 = fluid1 + fluid2;
+      BoutReal sum12 = fluid1[i] + fluid2[i];
       if (sum12 > 1.0) {
-        fluid1 /= sum12;
-        fluid2 /= sum12;
+        fluid1[i] /= sum12;
+        fluid2[i] /= sum12;
       }
 
       // Fluid0 is whatever fraction is left
-      BoutReal fluid0 = 1.0 - fluid1 - fluid2;
+      fluid0[i] = 1.0 - fluid1[i] - fluid2[i];
 
       // Density and viscosity now a weighted sum of contributions from each fluid
-      density[i] = fluid0 * density0 + fluid1 * density1 + fluid2 * density2;
-      viscosity[i] = fluid0 * viscosity0 + fluid1 * viscosity1 + fluid2 * viscosity2;
+      density[i] = fluid0[i] * density0 + fluid1[i] * density1 + fluid2[i] * density2;
     }
     
     // Calculate curvature
@@ -231,6 +248,46 @@ protected:
     }
     mesh->communicate(psi); // Communicates guard cells
 
+    // Calculate shear rate (gamma)
+    // 
+    // shear_rate = sqrt( (psi_xx - psi_zz)^2 + psi_xz^2 )
+    //
+    // Based on http://dx.doi.org/10.1615/AtoZ.n.non-newtonian_fluids
+    shear_rate.allocate();
+    BOUT_FOR(i, shear_rate.getRegion("RGN_NOBNDRY")) {
+      // Mesh spacing
+      BoutReal dx = coord->dx[i];
+      BoutReal dz = coord->dz;
+
+      // Offset indices
+      auto ixp = i.xp(); // X+1
+      auto ixm = i.xm(); // X-1
+      auto izp = i.zp(); // Z+1
+      auto izm = i.zm(); // Z-1
+
+      // Second derivative in X
+      BoutReal psi_xx = (psi[i.xp()] - 2. * psi[i] + psi[i.xm()]) / SQ(dx);
+      // Second derivative in Z
+      BoutReal psi_zz = (psi[izp] - 2. * psi[i] + psi[izm]) / SQ(dz);
+      // Mixed derivative in X-Z
+      BoutReal psi_xz =
+          ((psi[ixp.zp()] - psi[ixm.zp()]) - (psi[ixp.zm()] - psi[ixm.zm()])) /
+          (4. * dx * dz);
+
+      shear_rate[i] = sqrt(2.*(SQ(psi_xx - psi_zz) + SQ(psi_xz)));
+      
+      // Now calculate viscosity, which may use shear rate
+
+      // Update kinematic viscosity coefficients at the current time
+      // Note: The variable "y" is (ab)used to represent the shear rate
+      BoutReal viscosity0 = viscosity0_generator->generate(0, shear_rate[i], 0, time);
+      BoutReal viscosity1 = viscosity1_generator->generate(0, shear_rate[i], 0, time);
+      BoutReal viscosity2 = viscosity2_generator->generate(0, shear_rate[i], 0, time);
+      
+      /// Kinematic viscosity
+      viscosity[i] = fluid0[i] * viscosity0 + fluid1[i] * viscosity1 + fluid2[i] * viscosity2;
+    }
+    
     // Boundary condition on vorticity
     // Thom's formula, imposing no-slip conditions on X boundaries
     // https://web.math.princeton.edu/~weinan/papers/cfd5.pdf

@@ -1,0 +1,72 @@
+nout = 100   # Number of output steps
+timestep = 1 # Time between outputs
+
+myg = 0  # No guard cells in Y since a 2D simulation
+
+ZMAX = mesh:Lz/(2*pi) # Sets dz
+
+[mesh]
+
+Lx = 0.05  # X size [m]
+Lz = 1  # Z size [m]
+
+nx = 68    # number of points in X, including 4 guard cells
+ny = 1      # Axisymmetric
+nz = 64    # Number of points in Z
+
+xpos = x * Lx          # X position
+zpos = z * Lz / (2*pi) # Z position
+
+dx = Lx/(nx-4)
+
+[mesh:ddx]
+upwind = W3  # Upwinding scheme in X (W3 = WENO3)
+
+[mesh:ddz]
+upwind = W3  # Upwinding scheme in Z
+
+[laplace]    # Laplacian inversion for vorticity -> stream function (psi)
+type=cyclic
+
+[solver]     # Time integration solver
+maxl=10      # Maximum number of linear iterations per nonlinear step
+mxstep=100000
+
+[model]
+
+# density of each fluid [kg/m^3]
+density0 = 1000  # water = 1e3
+density1 = 1000  # air = 1.225
+
+# Kinematic viscosity of each fluid [m^2/s]
+# Note: Here y is the shear rate in s^-1
+viscosity0 = 1e-4 / (1 + (y/1e-4)^2)     # water ~ 1mm^2/s (1e-6)
+viscosity1 = 1e-6     # air ~ 1.48e-5
+
+surface_tension = 7.2e-2 # 72 mN / m for water-air
+curv_method = 0  # 0 = Finite Differences on smoothed VOF; 1 = Height Function method
+
+gravity = 0.0   # Acceleration due to gravity
+
+vof_D = 1   # Anti-diffusion in VOF advection
+boussinesq = true  # Neglect variations of density in inertia?
+
+no_slip_x_down = true # No-slip boundary condition on lower X boundary?
+no_slip_x_up = true # No-slip boundary condition on upper X boundary?
+
+[vorticity]
+
+# Boundary conditions
+bndry_all = neumann
+
+# Initial condition.
+function = 0.1*sin(x*2*pi)
+
+[vof]
+
+bndry_all=neumann
+
+function = 0.0
+
+
+
